@@ -6,34 +6,8 @@ Created on Mon Feb 5 21:51:29 2024
 @author: candilsiz
 """
 
-# DATASET from Kaggle
+# DATA SET
 # Link ---> https://www.kaggle.com/datasets/robikscube/hourly-energy-consumption
-
-# TODO
-# Clean/tidy up the code !!
-# Add more features e.g: weather etc, sin cos features?
-# Combine different models xgboost, lstm, prophet, and arima etc.
-# Use ensemble learning bagging boosting to icnrease accuracy
-# Prophet hypertuning, cv, and more:
-# ---> https://www.youtube.com/watch?v=hht0iKzviWE (24-26 min)
-
-
-# FIXME
-# Look up what are dates that most error occured [DONE]
-# and do something about it :) 
-# Detailed Outlier Analysis (use different method), Z-Score
-# Investigate feature importance
-# Change lag feature intervals ://, 
-# do eda to obtain patterns in seasonal, monthly, yearly 
-# to get meaningul lag features intervals
-
-# DONE
-# Cluster features [DONE] (+++)
-# Cross Validation [DONE] (++)
-# PARAMETER TUNING of MODELS (small+)
-# Use onehotencoder for replacing string categories [DONE] (+)
-# Try replace NaN s with 0's in the df [DONE] (-)
-# Added holidays, lag features, and timeseries features [DONE]
 
 import numpy as np
 import pandas as pd
@@ -226,9 +200,6 @@ df = pd.read_csv("PJME_hourly.csv",
                    index_col=[0], 
                    parse_dates=[0])
 
-# OUTLIER ANALYSIS 
-
-# seems that somewhere in 2013 there exits Outlier Behaviour
 df.plot(figsize=(15,5),
         style=".",
         title = "PJME in MW (Raw)")
@@ -245,6 +216,7 @@ df.plot(figsize=(15,5),
         title = "PJME in MW (Outliers Removed)")
 plt.show()
 
+# call cross validation function
 #timeseries_cv(df)
 
 # just to see one-year trend/pattern
@@ -290,6 +262,7 @@ X_train, y_train = generate_tsFeatures(train, label="PJME_MW")
 X_test, y_test = generate_tsFeatures(test, label="PJME_MW")
 # # features_and_target = pd.concat([X,y], axis =1)
 
+# call hyperparameter tuning function
 #hyperparameter_tuning()
 
 xgb = xgb.XGBRegressor(n_estimators = 800,
@@ -302,7 +275,6 @@ xgb.fit(X_train, y_train,
         eval_metric="rmse",
         verbose = 10)
 
-# Feature Importance ADD OTHER FEATURE IMPORTANCE METHODS, features are highly correlated
 feature_importance = pd.DataFrame(data = xgb.feature_importances_,
                                   index = xgb.feature_names_in_,
                                   columns = ["importance"])
