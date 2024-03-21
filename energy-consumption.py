@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Feb 5 21:51:29 2024
-
-@author: candilsiz
-"""
-
 # DATA SET
 # Link ---> https://www.kaggle.com/datasets/robikscube/hourly-energy-consumption
 
@@ -14,14 +6,53 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import holidays
+from sklearn.model_selection import train_test_split
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
 from sklearn.cluster import KMeans
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.linear_model import LinearRegression
 import xgboost as xgb
 from sklearn.metrics import mean_squared_error
 
 plt.style.use("fivethirtyeight")
 
+# StackedHybrid
+class StackedHybrid:
+    """
+    inputs: model_1, model_1, X_1, X_2
+    model_1 := weak learner
+    model_2 := strong learner
+    X_1 := Dataframe only includes time series features
+    X_2 := Dataframe  includes all time series features
+    """
+    def __init__(self, model_1, model_2):
+        self.model_1 = model_1  # Linear Regression
+        self.model_2 = model_2  # XGBoost
+        
+    def fit(self, X_1, X_2, y):
+        self.model_1.fit(X_1, y)
+        y_pred_1 = self.model_1.predict(X_1)
+
+        X_2_augmented = X_2.copy()
+        X_2_augmented['LR_pred'] = y_pred_1  # append as new feature / stacking here
+        
+        X_2_train, X_2_val, y_train, y_val = train_test_split(X_2_augmented, y, test_size=0.2, shuffle=False)
+        self.model_2.fit(X_2_train, y_train,
+                         eval_set=[(X_2_val, y_val)],
+                         eval_metric="rmse",
+                         verbose=True)
+        
+    def predict(self, X_1, X_2):
+        y_pred_1 = self.model_1.predict(X_1)
+        
+        X_2_augmented = X_2.copy()
+        X_2_augmented['LR_pred'] = y_pred_1
+        
+        X_2_train, X_2_val, y_train, y_val = train_test_split(X_2_augmented, y, test_size=0.2, shuffle=False)
+        y_pred_2 = self.model_2.predict(X_2_val)
+        
+        return y_pred_2, y_val
+    
 # Cross Validation
 def timeseries_cv(df):
     """
@@ -35,7 +66,6 @@ def timeseries_cv(df):
     # one-year for test 
     ts_split = TimeSeriesSplit(n_splits=5, test_size=24*365, gap=24)
     fig, axis = plt.subplots(5,1, figsize=(15,15), sharex = True) 
-    
     fold=0
     predicts = list()
     scores = list()
@@ -134,10 +164,11 @@ def generate_lagFeatures(df):
     df = df.sort_index()
     target_map = df["PJME_MW"].to_dict()
     
-    df["lag0"] = (df.index - pd.Timedelta("30 days")).map(target_map)
-    df["lag1"] = (df.index - pd.Timedelta("364 days")).map(target_map)
-    df["lag2"] = (df.index - pd.Timedelta("728 days")).map(target_map)
-    df["lag3"] = (df.index - pd.Timedelta("1092 days")).map(target_map)
+    df["lag0"] = (df.index - pd.Timedelta("7 days")).map(target_map)
+    df["lag1"] = (df.index - pd.Timedelta("30 days")).map(target_map)
+    df["lag2"] = (df.index - pd.Timedelta("364 days")).map(target_map)
+    df["lag3"] = (df.index - pd.Timedelta("728 days")).map(target_map)
+    df["lag4"] = (df.index - pd.Timedelta("1092 days")).map(target_map)
     return df
 
 def is_holiday(date):
@@ -161,10 +192,9 @@ def model_specification(params):
         reg_alpha = int(params['reg_alpha']),
         min_child_weight = int(params['min_child_weight']),
         colsample_bytree = params['colsample_bytree'],
-        reg_lambda = params['reg_lambda']
-    )
+        reg_lambda = params['reg_lambda'])
     evaluation = [(X_train, y_train), (X_test, y_test)]
-
+    
     XGBR.fit(X_train, y_train,
             eval_set=evaluation, eval_metric="rmse",
             early_stopping_rounds=10, verbose=False)
@@ -176,15 +206,14 @@ def model_specification(params):
 
 def hyperparameter_tuning():
     trials = Trials()
-    
     best_hyperparams = fmin(fn=model_specification,
                             space=params,
                             algo=tpe.suggest,
                             max_evals=100,
                             trials=trials)
-    print("The best hyperparameters are : ", "\n")
+    print("The best hyperparameters are: ", "\n")
     print(best_hyperparams)
-        
+
 params = {
     'max_depth': hp.quniform("max_depth", 3, 18, 1),
     'gamma': hp.uniform('gamma', 1, 9),
@@ -194,7 +223,7 @@ params = {
     'min_child_weight': hp.quniform('min_child_weight', 0, 10, 1),
     'n_estimators': hp.quniform('n_estimators', 100, 1000, 100),
     'seed': 0
-    }
+        }
 
 df = pd.read_csv("PJME_hourly.csv", 
                    index_col=[0], 
@@ -211,26 +240,17 @@ df.query("PJME_MW < 20_000").plot(figsize=(15,5),
 # eleminate obvious Outliers
 df = df.query("PJME_MW > 19_000").copy()
 
+naked_df = df.copy()
+
 df.plot(figsize=(15,5),
         style=".",
         title = "PJME in MW (Outliers Removed)")
 plt.show()
 
 # call cross validation function
-#timeseries_cv(df)
-
-# just to see one-year trend/pattern
-# df["year"] = df["date"].dt.year
-# oneYear = df[df["year"]==2006]
-# oneYear =oneYear.drop(["year","date"],axis=1)
-# print(oneYear)
-# oneYear.plot(figsize=(15,8), title = "PJME in MW")
-# plt.show()
-
-#df[["lag1", "lag2", "lag3"]] = df[["lag1", "lag2", "lag3"]].fillna(value=0)  
+#timeseries_cv(df) 
 
 us_holidays = holidays.UnitedStates()
-
 df = generate_lagFeatures(df)
 df = cluster(df)
 df = pd.get_dummies(df, columns = ["cluster"])
@@ -245,8 +265,41 @@ sns.heatmap(corr, cmap='RdBu', annot=True, fmt=".2f")
 plt.xticks(range(len(corr.columns)), corr.columns);
 plt.yticks(range(len(corr.columns)), corr.columns)
 plt.title("Correlation Matrix of All Data Set")
-plt.show()
+# plt.show()
 
+def stack_operator(x1,x2,y):
+    model_SH = StackedHybrid(
+                            model_1 = LinearRegression(fit_intercept = False), # -- Weak Learner
+                            model_2 = xgb.XGBRegressor(n_estimators = 800,     # -- Strong Learner
+                            early_stopping_rounds = 50,
+                            learning_rate = 0.01)
+                            )
+    model_SH.fit(x1, x2, y)   
+    pred, actual = model_SH.predict(x1, x2)
+    actual = pd.DataFrame(actual)
+    pred = pd.Series(pred)
+    actual['predictions'] = pred.values 
+    print(" - - - - -  Prediction/Actual Dataframe  - - - - - ")
+    return actual
+
+x1 = generate_tsFeatures(naked_df) # x1 includes only time series features
+x2 = X                             # x2 includes all features
+
+# USE HybridStack Class
+final_df = stack_operator(x1,x2,y)
+
+# RMSE 
+rsme_score = np.sqrt(mean_squared_error(final_df["PJME_MW"], final_df["predictions"]))
+print(f"RMSE Score on Test set: {rsme_score:0.2f}")
+
+# MAPE 
+mape_score = mape(final_df["PJME_MW"], final_df["predictions"])
+print(f"Mean Absolute Percantage Error: %{mape_score:0.2f}")
+
+final_df["Gap Percentage(%)"] = (((final_df["PJME_MW"] - final_df["predictions"]) / final_df["PJME_MW"])) * 100 
+print(final_df)
+
+# Only XGBoost Model
 train = df.loc[df.index < "2017-01-01"]
 test = df.loc[df.index >= "2017-01-01"]
 
@@ -263,7 +316,7 @@ X_test, y_test = generate_tsFeatures(test, label="PJME_MW")
 # # features_and_target = pd.concat([X,y], axis =1)
 
 # call hyperparameter tuning function
-#hyperparameter_tuning()
+# hyperparameter_tuning() #
 
 xgb = xgb.XGBRegressor(n_estimators = 800,
                         booster = "gbtree",
@@ -282,11 +335,12 @@ feature_importance = pd.DataFrame(data = xgb.feature_importances_,
 feature_importance.sort_values("importance").plot(kind="barh",title="Feature Importance")
 
 test["prediction"] = xgb.predict(X_test)
+test.index = pd.to_datetime(test.index)
 
 df = df.merge(test[["prediction"]], how="left", left_index=True, right_index=True)
 
 ax = df[["PJME_MW"]].plot(figsize = (15,5))
-df["prediction"].plot(ax=ax, style=".")
+df["prediction"].plot(ax=ax)
 plt.legend(["Past Data", "Predicted Data"])
 ax.set_title("Energy Predictions in MW")
 plt.show()
@@ -307,5 +361,3 @@ best_predicted = test.groupby("date")["error"].mean().sort_values(ascending = Tr
 
 print(f"\nTop 10 Worst Prediction by date: {worst_predicted}\n")
 print(f"Top 10 Best Prediction by date: {best_predicted}")
-
-
